@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deliver them in any order</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../styles/widget.css">
+</head>
+<body>
+
+<h1>Deliver them in any order</h1>
+
+<div class="tray" id="tray" role="group" aria-label="Datagrams the client can send"></div>
+
+<div class="readout">
+  <div class="card maj">
+    <h2>Server state</h2>
+    <div class="verdict commits" id="verdict-l"></div>
+  </div>
+  <div class="card min">
+    <h2>Last reply</h2>
+    <div class="verdict" id="verdict-reply"></div>
+  </div>
+  <div class="card">
+    <h2>Datagrams sent</h2>
+    <div class="verdict" id="verdict-sent"></div>
+  </div>
+</div>
+
+<ul class="log" id="log" aria-live="polite" aria-label="Transcript"></ul>
+
+<p class="takeaway" id="takeaway"></p>
+
+<script>
+// ---------------------------------------------------------------------------
+// CONFIG — every number and string a revision might touch lives here.
+// Rendering and interaction logic below should rarely need editing.
+// ---------------------------------------------------------------------------
+const CONFIG = {
+  // One entry per datagram the client can send, in sequence-number order.
+  payloads: ["alpha", "beta", "gamma", "delta", "epsilon"],
+  startL: 0,
+  wire:   { send: (n, p) => `${n},${p}` },
+  reply:  {
+    accept: n => `ok,${n}`,
+    refuse: l => `waitingfor,${l + 1}`
+  },
+  copy: {
+    state:    l => `L = ${l}`,
+    sent:     n => `${n}`,
+    none:     "—",
+    reset:    "Reset server",
+    caption:  l => `L = ${l}. The only datagram this server will accept is ${l + 1}.`,
+    complete: l => `L = ${l}. Every message has been accepted in order.`
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Logic
+// ---------------------------------------------------------------------------
+const $ = id => document.getElementById(id);
+const tray = $("tray"), log = $("log");
+
+let L, sent;
+
+function reset() {
+  L = CONFIG.startL;
+  sent = 0;
+  log.innerHTML = "";
+  render();
+}
+
+// The server. One integer of state, one comparison.
+function receive(n) {
+  if (n === L + 1) { L = n; return { text: CONFIG.reply.accept(n), kind: "accept" }; }
+  return { text: CONFIG.reply.refuse(L), kind: "refuse" };
+}
+
+function send(n) {
+  sent++;
+  append("→", CONFIG.wire.send(n, CONFIG.payloads[n - 1]), "");
+  const r = receive(n);
+  append("←", r.text, r.kind);
+  render(r.text);
+}
+
+function append(dir, text, kind) {
+  const li = document.createElement("li");
+  li.innerHTML = `<span class="dir">${dir}</span><span class="${kind}"></span>`;
+  li.lastChild.textContent = text;
+  log.appendChild(li);
+  log.scrollTop = log.scrollHeight;
+}
+
+function render(lastReply) {
+  tray.innerHTML = "";
+  CONFIG.payloads.forEach((payload, i) => {
+    const n = i + 1;
+    const b = document.createElement("button");
+    b.className = "dgram" + (n <= L ? " done" : n === L + 1 ? " next" : "");
+    b.textContent = CONFIG.wire.send(n, payload);
+    b.addEventListener("click", () => send(n));
+    tray.appendChild(b);
+  });
+
+  const r = document.createElement("button");
+  r.className = "dgram reset";
+  r.textContent = CONFIG.copy.reset;
+  r.addEventListener("click", reset);
+  tray.appendChild(r);
+
+  $("verdict-l").textContent = CONFIG.copy.state(L);
+  $("verdict-sent").textContent = CONFIG.copy.sent(sent);
+
+  const reply = $("verdict-reply");
+  reply.textContent = lastReply || CONFIG.copy.none;
+  reply.className = "verdict " + (!lastReply ? "" : lastReply.startsWith("ok") ? "commits" : "stalls");
+
+  $("takeaway").textContent = L === CONFIG.payloads.length
+    ? CONFIG.copy.complete(L)
+    : CONFIG.copy.caption(L);
+}
+
+reset();
+</script>
+</body>
+</html>
