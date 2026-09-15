@@ -6,6 +6,7 @@ import java.io.*;
 public class Servidor {
   public static void main(String[] args) {
     DatagramSocket aSocket = null;
+    int L = 0;
     try {
       aSocket = new DatagramSocket(6789);
       byte[] buffer = new byte[1000];
@@ -13,11 +14,46 @@ public class Servidor {
       while (true) {
         DatagramPacket request = new DatagramPacket(buffer, buffer.length);
         aSocket.receive(request);
+
         String msg = new String(request.getData(), 0, request.getLength());
         System.out.println("Recebido de " + request.getAddress() + ":" + request.getPort() + " -> " + msg);
+
+        int posVirgula = msg.indexOf(',');
+        if (posVirgula == -1) {
+          System.out.println("Mensagem mal formada: sem virgula");
+          continue;
+        }
+
+        String numeroStr = msg.substring(0, posVirgula).trim();
+        String texto = msg.substring(posVirgula + 1).trim();
+
+        if (texto.isEmpty()) {
+          System.out.println("Mensagem mal formada: texto vazio");
+          continue;
+        }
+
+        int N;
+        try {
+          N = Integer.parseInt(numeroStr);
+        } catch (NumberFormatException e) {
+          System.out.println("Mensagem mal formada: numero invalido");
+          continue;
+        }
+
+        String resposta;
+        if (N == L + 1) {
+          resposta = "echo," + texto;
+          L = N;
+          System.out.println("Aceitei em ordem. Agora L = " + L);
+        } else {
+          resposta = "waitingfor," + (L + 1);
+          System.out.println("Fora de ordem. Resposta: " + resposta + " | L = " + L);
+        }
+
+        byte[] replyData = resposta.getBytes();
         DatagramPacket reply = new DatagramPacket(
-          request.getData(),
-          request.getLength(),
+          replyData,
+          replyData.length,
           request.getAddress(),
           request.getPort()
         );
