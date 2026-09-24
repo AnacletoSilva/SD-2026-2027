@@ -12,38 +12,14 @@ public class Cliente {
       InetAddress aHost = InetAddress.getByName("localhost");
       int serverPort = 6789;
 
-      System.out.println("Modo de numeracao: 1 = automatico | 2 = manual");
-      System.out.print("Escolha: ");
-      String modo = in.readLine();
-
-      int proximoNumero = 1;
-      boolean automatico = modo.equals("1");
-
-      System.out.println("Escreve mensagens. Escreve 'sair' para terminar.");
+      System.out.println("Escreve mensagens no formato N, texto. Escreve 'sair' para terminar.");
       while (true) {
-        int numero;
-        if (automatico) {
-          numero = proximoNumero++;
-        } else {
-          System.out.print("Numero de sequencia: ");
-          String numeroLinha = in.readLine();
-          if (numeroLinha == null || numeroLinha.equalsIgnoreCase("sair"))
-            break;
-          try {
-            numero = Integer.parseInt(numeroLinha);
-          } catch (NumberFormatException e) {
-            System.out.println("Numero invalido. Tenta outra vez.");
-            continue;
-          }
-        }
-
         System.out.print("> ");
         String line = in.readLine();
         if (line == null || line.equalsIgnoreCase("sair"))
           break;
 
-        String mensagem = numero + "," + line;
-        byte[] m = mensagem.getBytes();
+        byte[] m = line.getBytes();
         DatagramPacket request = new DatagramPacket(m, m.length, aHost, serverPort);
         aSocket.send(request);
 
@@ -52,7 +28,9 @@ public class Cliente {
         aSocket.receive(reply);
 
         String resposta = new String(reply.getData(), 0, reply.getLength());
-        if (resposta.startsWith("waitingfor,")) {
+        if (resposta.startsWith("error,")) {
+          System.out.println("Erro: " + resposta.substring("error,".length()));
+        } else if (resposta.startsWith("waitingfor,")) {
           System.out.println("Resposta: " + resposta + " (espera pela sequencia correta)");
         } else if (resposta.startsWith("echo,")) {
           System.out.println("Resposta: " + resposta + " (echo)");
