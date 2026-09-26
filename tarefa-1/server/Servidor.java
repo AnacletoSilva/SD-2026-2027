@@ -43,12 +43,19 @@ public class Servidor {
             try {
               int N = Integer.parseInt(numeroStr);
               int lastBefore = L;
+              int rececaoAntes = rececao.size();
               L = processDeliveredMessages(L, N, texto);
               if (L != lastBefore) {
                 resposta = "echo," + texto;
               } else {
                 resposta = "waitingfor," + (L + 1);
               }
+              System.out.println("Última mensagem em ordem: " + L);
+              System.out.println("Estrutura temporária: " + temporarias);
+              System.out.println("Número de mensagens entregues neste passo: "
+                      + (rececao.size() - rececaoAntes));
+              System.out.println("Mensagens entregues neste passo: "
+                      + rececao.subList(rececaoAntes, rececao.size()));
             } catch (NumberFormatException e) {
               System.out.println("Mensagem mal formada: numero invalido");
               resposta = "error,numero invalido";
@@ -90,8 +97,13 @@ public class Servidor {
         rececao.add(mensagem);
         nLastMessageInOrder = proximaMensagem;
       }
-    } else {
+    } else if (nCurrentMessage > nLastMessageInOrder + 1) {
       temporarias.put(nCurrentMessage, currentMessage);
+
+    } else {
+      System.out.println("Lista de rececao completa: " + rececao);
+      System.out.println("Estrutura temporaria final: " + temporarias);
+      return nLastMessageInOrder;
     }
 
     return nLastMessageInOrder;
