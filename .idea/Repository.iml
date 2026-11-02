@@ -11,6 +11,10 @@
       <sourceFolder url="file://$MODULE_DIR$/Sprints/E1-COMINDIR01" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/Sprints/E1-COMINDIR01/rep01-lider/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/Sprints/E1-COMINDIR01/rep01-replica/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/Sprints/E1-COMINDIR02" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/Sprints/E1-COMINDIR03" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/Sprints/E1-COMINDIR04" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/Sprints/E1-COMINDIR05" isTestSource="false" />
     </content>
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />
