@@ -81,7 +81,8 @@ public class PartitionReplica {
 
                                 // Atualizar o monitor de heartbeat
                                 estado.monitor.onHeartbeat(
-                                        batch.getInc(),
+                                        batch.getTerm(),
+                                        batch.getLeader(),
                                         batch.getHb()
                                 );
 

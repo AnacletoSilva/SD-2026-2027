@@ -48,9 +48,9 @@ public final class RaftState {
     private long prazo;
 
     public RaftState(int particao, int proprio, int tamanhoGrupo,
-                      long minimoMs, long maximoMs,
-                      Path ficheiroEstado,
-                      Consumer<String> registo) throws IOException {
+                     long minimoMs, long maximoMs,
+                     Path ficheiroEstado,
+                     Consumer<String> registo) throws IOException {
 
         this.particao = particao;
         this.proprio = proprio;
@@ -235,12 +235,21 @@ public final class RaftState {
         }
 
         if (papel == Papel.LIDER) {
-            registo.accept(
-                    "ERRO;p" + particao
-                            + ";dois lideres no termo " + termo
-            );
+            if (liderDoLote != proprio) {
+                // Outro nó diz-se líder no mesmo termo → dois líderes de facto
+                registo.accept(
+                        "ERRO;p" + particao
+                                + ";dois lideres no termo " + termo
+                );
 
-            return false;
+                return false;
+            }
+
+            // liderDoLote == proprio: é o próprio lote reenviado pelo PubSub.
+            // Não é conflito — aceita sem emitir erro.
+            reiniciarTemporizador();
+
+            return true;
         }
 
         papel = Papel.SEGUIDOR;

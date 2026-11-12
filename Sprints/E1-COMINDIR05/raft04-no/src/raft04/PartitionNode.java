@@ -5,11 +5,14 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
+import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -26,6 +29,7 @@ public final class PartitionNode {
     private final String endereco;
     private final String api;
     private final int porto;
+    private final Path ficheiroEventos;
 
     private final IpfsPubSub pubSub;
     private final RecordFile ficheiro;
@@ -75,6 +79,9 @@ public final class PartitionNode {
         this.endereco = endereco;
         this.api = api;
         this.porto = Wire.nodePort(k, i);
+        this.ficheiroEventos = Path.of(
+                "eventos-p" + k + "-n" + i + ".txt"
+        );
 
         this.pubSub = new IpfsPubSub(api);
 
@@ -84,7 +91,7 @@ public final class PartitionNode {
 
         this.vector = new VectorClock(n);
 
-        SensorRecord ultimo = ficheiro.last();
+        SensorRecord ultimo = ultimoRegisto();
 
         if (ultimo != null) {
             this.ultimoSeq = ultimo.getSeq();
@@ -122,6 +129,46 @@ public final class PartitionNode {
                 Wire.VERIFICACAO_MS,
                 TimeUnit.MILLISECONDS
         );
+    }
+
+    private void registarEvento(
+            String evento,
+            String detalhe
+    ) {
+        String linha = LocalDateTime.now()
+                + ";" + evento
+                + ";p" + k
+                + ";" + detalhe
+                + System.lineSeparator();
+
+        try {
+            Files.writeString(
+                    ficheiroEventos,
+                    linha,
+                    StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.APPEND
+            );
+        } catch (IOException e) {
+            System.out.println(
+                    "Erro ao registar evento: " + e.getMessage()
+            );
+        }
+
+        System.out.println(
+                evento + ";p" + k + ";" + detalhe
+        );
+    }
+
+    private SensorRecord ultimoRegisto() {
+        try {
+            return ficheiro.last();
+        } catch (IOException e) {
+            throw new UncheckedIOException(
+                    "Não foi possível ler o último registo",
+                    e
+            );
+        }
     }
 
     private void iniciarSubscricaoIN() {
@@ -298,10 +345,9 @@ public final class PartitionNode {
                             );
 
                     if (!aceite) {
-                        System.out.println(
-                                "IGNORADO;p" + k
-                                        + ";term="
-                                        + batch.getTerm()
+                        registarEvento(
+                                "IGNORADO",
+                                "term=" + batch.getTerm()
                                         + ";leader="
                                         + batch.getLeader()
                         );
@@ -319,25 +365,7 @@ public final class PartitionNode {
                     atualizarEnvioLotes();
 
                     synchronized (ficheiro) {
-                        for (SensorRecord registo
-                                : batch.getRecords()) {
-                            validarEAplicar(
-                                    registo,
-                                    batch.getTerm()
-                            );
-                        }
-                    }
-
-                    SensorRecord ultimo = ficheiro.last();
-
-                    if (ultimo != null
-                            && batch.getLastSeq()
-                            == ultimo.getSeq()
-                            && ultimo.getTerm()
-                            != batch.getLastTerm()) {
-                        System.out.println(
-                                "DIVERGENCIA_ULTIMO_TERMO;p" + k
-                        );
+                        integrarLote(batch);
                     }
 
                     if (ultimoSeq < batch.getLastSeq()
@@ -345,10 +373,9 @@ public final class PartitionNode {
                         recuperacaoEmCurso = true;
                         precisaRecuperar = true;
 
-                        System.out.println(
-                                "LACUNA;p" + k
-                                        + ";ultimoSeq="
-                                        + ultimoSeq
+                        registarEvento(
+                                "LACUNA",
+                                "ultimoSeq=" + ultimoSeq
                                         + ";lastSeqLider="
                                         + batch.getLastSeq()
                         );
@@ -357,7 +384,7 @@ public final class PartitionNode {
             }
 
             if (precisaRecuperar) {
-                recuperarRegistos();
+                recuperarRegistos(batch.getTerm());
             }
 
         } catch (IllegalArgumentException e) {
@@ -372,15 +399,94 @@ public final class PartitionNode {
         }
     }
 
+    private void integrarLote(Batch batch)
+            throws IOException {
+        for (SensorRecord registo : batch.getRecords()) {
+            if (registo.getTerm() < 0
+                    || registo.getTerm() > batch.getTerm()) {
+                throw new IllegalArgumentException(
+                        "Registo fora do termo anunciado: seq="
+                                + registo.getSeq()
+                                + ", termo="
+                                + registo.getTerm()
+                );
+            }
+        }
+
+        long primeiroDivergente = 0;
+
+        for (SensorRecord registo : batch.getRecords()) {
+            if (registo.getSeq() > ultimoSeq) {
+                continue;
+            }
+
+            List<SensorRecord> existente =
+                    ficheiro.range(
+                            registo.getSeq(),
+                            registo.getSeq()
+                    );
+
+            if (existente.isEmpty()
+                    || !existente.get(0)
+                    .toLine()
+                    .equals(registo.toLine())) {
+                primeiroDivergente = registo.getSeq();
+                break;
+            }
+        }
+
+        if (primeiroDivergente == 0
+                && batch.getLastSeq() < ultimoSeq) {
+            primeiroDivergente = batch.getLastSeq() + 1;
+        }
+
+        SensorRecord ultimo = ultimoRegisto();
+
+        if (primeiroDivergente == 0
+                && ultimo != null
+                && ultimo.getSeq() == batch.getLastSeq()
+                && ultimo.getTerm() != batch.getLastTerm()) {
+            primeiroDivergente = ultimo.getSeq();
+        }
+
+        if (primeiroDivergente > 0) {
+            long seqDivergente = primeiroDivergente;
+            long inicioBloco = inicioBlocoTermo(
+                    seqDivergente
+            );
+
+            ficheiro.truncateAfter(inicioBloco - 1);
+            retidos.tailMap(inicioBloco).clear();
+            recarregarEstadoDoFicheiro();
+
+            registarEvento(
+                    "DIVERGENCIA",
+                    "seq=" + seqDivergente
+            );
+
+            registarEvento(
+                    "TRUNCADO",
+                    "ate=" + (inicioBloco - 1)
+            );
+        }
+
+        for (SensorRecord registo : batch.getRecords()) {
+            validarEAplicar(
+                    registo,
+                    batch.getTerm()
+            );
+        }
+    }
+
     private void validarEAplicar(
             SensorRecord registo,
             long termLote
     ) throws IOException {
         if (registo.getTerm() < 0
                 || registo.getTerm() > termLote) {
-            System.out.println(
-                    "REGISTO_REJEITADO;p" + k
-                            + ";seq=" + registo.getSeq()
+            registarEvento(
+                    "REGISTO_REJEITADO",
+                    "seq=" + registo.getSeq()
                             + ";term=" + registo.getTerm()
             );
             return;
@@ -396,30 +502,46 @@ public final class PartitionNode {
                     && existentes.get(0)
                     .toLine()
                     .equals(registo.toLine())) {
-                System.out.println(
-                        "DUPLICADO;p" + k + ";seq=" + seq
+                registarEvento(
+                        "DUPLICADO",
+                        "seq=" + seq
                 );
-            } else {
-                System.out.println(
-                        "DIVERGENCIA;p" + k + ";seq=" + seq
-                );
+                return;
             }
 
-            return;
+            long inicioBloco =
+                    inicioBlocoTermo(seq);
+
+            ficheiro.truncateAfter(inicioBloco - 1);
+            retidos.tailMap(inicioBloco).clear();
+            recarregarEstadoDoFicheiro();
+
+            registarEvento(
+                    "DIVERGENCIA",
+                    "seq=" + seq
+            );
+
+            registarEvento(
+                    "TRUNCADO",
+                    "ate=" + (inicioBloco - 1)
+            );
         }
 
         SensorRecord anterior = retidos.get(seq);
 
         if (anterior != null) {
-            if (anterior.toLine().equals(registo.toLine())) {
-                System.out.println(
-                        "DUPLICADO_RETIDO;p" + k
-                                + ";seq=" + seq
+            if (anterior.toLine()
+                    .equals(registo.toLine())) {
+                registarEvento(
+                        "DUPLICADO_RETIDO",
+                        "seq=" + seq
                 );
             } else {
-                System.out.println(
-                        "DIVERGENCIA_RETIDA;p" + k
-                                + ";seq=" + seq
+                retidos.put(seq, registo);
+
+                registarEvento(
+                        "DIVERGENCIA_RETIDA",
+                        "seq=" + seq
                 );
             }
 
@@ -429,9 +551,9 @@ public final class PartitionNode {
         retidos.put(seq, registo);
 
         if (seq > ultimoSeq + 1) {
-            System.out.println(
-                    "LACUNA_REGISTO;p" + k
-                            + ";esperado=" + (ultimoSeq + 1)
+            registarEvento(
+                    "LACUNA_REGISTO",
+                    "esperado=" + (ultimoSeq + 1)
                             + ";recebido=" + seq
             );
         }
@@ -439,7 +561,8 @@ public final class PartitionNode {
         aplicarRetidos();
     }
 
-    private void aplicarRetidos() throws IOException {
+    private void aplicarRetidos()
+            throws IOException {
         while (!retidos.isEmpty()
                 && retidos.firstKey() == ultimoSeq + 1) {
             SensorRecord registo =
@@ -447,6 +570,7 @@ public final class PartitionNode {
 
             ficheiro.append(registo);
             ultimoSeq = registo.getSeq();
+
             lamport = Math.max(
                     lamport,
                     registo.getLamport()
@@ -456,14 +580,69 @@ public final class PartitionNode {
                 vector = registo.getVector().copy();
             }
 
-            System.out.println(
-                    "APLICADO;p" + k
-                            + ";seq=" + ultimoSeq
+            registarEvento(
+                    "APLICADO",
+                    "seq=" + ultimoSeq
             );
         }
     }
 
-    private void recuperarRegistos() {
+    private long inicioBlocoTermo(long seq)
+            throws IOException {
+        List<SensorRecord> todos = ficheiro.all();
+        int indice = -1;
+
+        for (int j = 0; j < todos.size(); j++) {
+            if (todos.get(j).getSeq() == seq) {
+                indice = j;
+                break;
+            }
+        }
+
+        if (indice < 0) {
+            return seq;
+        }
+
+        long termo = todos.get(indice).getTerm();
+        long inicio = todos.get(indice).getSeq();
+
+        while (indice > 0) {
+            SensorRecord anterior =
+                    todos.get(indice - 1);
+
+            SensorRecord atual =
+                    todos.get(indice);
+
+            if (anterior.getSeq() + 1 != atual.getSeq()
+                    || anterior.getTerm() != termo) {
+                break;
+            }
+
+            indice--;
+            inicio = todos.get(indice).getSeq();
+        }
+
+        return inicio;
+    }
+
+    private void recarregarEstadoDoFicheiro()
+            throws IOException {
+        SensorRecord ultimo = ultimoRegisto();
+
+        ultimoSeq = ultimo == null
+                ? 0
+                : ultimo.getSeq();
+
+        if (ultimo != null) {
+            lamport = ultimo.getLamport();
+
+            if (ultimo.getVector() != null) {
+                vector = ultimo.getVector().copy();
+            }
+        }
+    }
+
+    private void recuperarRegistos(long termoLote) {
         long de;
         long ate;
         String host;
@@ -471,9 +650,11 @@ public final class PartitionNode {
 
         synchronized (this) {
             if (hostLider == null || portoLider == null) {
-                System.out.println(
-                        "RECUPERACAO_FALHOU: líder desconhecido"
+                registarEvento(
+                        "RECUPERACAO_FALHOU",
+                        "líder desconhecido"
                 );
+
                 recuperacaoEmCurso = false;
                 return;
             }
@@ -521,6 +702,10 @@ public final class PartitionNode {
 
             String linha;
             boolean recebeuFim = false;
+            long proximo = de;
+
+            List<SensorRecord> recuperados =
+                    new ArrayList<>();
 
             while ((linha = entrada.readLine()) != null) {
                 if (Wire.isolated(k, i)) {
@@ -533,44 +718,108 @@ public final class PartitionNode {
                 }
 
                 if (linha.startsWith("ERRO ")) {
-                    System.out.println(
-                            "RECUPERACAO_FALHOU: " + linha
-                    );
-                    break;
+                    throw new IOException(linha);
                 }
 
                 SensorRecord registo =
                         SensorRecord.fromLine(linha);
 
-                synchronized (this) {
-                    validarEAplicar(
-                            registo,
-                            registo.getTerm()
+                if (registo.getSeq() != proximo
+                        || registo.getSeq() > ate) {
+                    throw new IOException(
+                            "Intervalo TCP incompleto "
+                                    + "ou fora de ordem"
                     );
                 }
 
-                System.out.println(
-                        "RECUPERADO;p" + k
-                                + ";seq="
-                                + registo.getSeq()
-                );
+                if (registo.getTerm() < 0
+                        || registo.getTerm() > termoLote) {
+                    throw new IOException(
+                            "Registo recebido fora "
+                                    + "do termo anunciado"
+                    );
+                }
+
+                recuperados.add(registo);
+                proximo++;
             }
 
             if (!recebeuFim) {
-                System.out.println(
-                        "RECUPERACAO_FALHOU: FIM ausente"
+                throw new IOException(
+                        "FIM ausente na recuperacao TCP"
                 );
             }
 
+            if (proximo != ate + 1) {
+                throw new IOException(
+                        "Servidor nao devolveu todos "
+                                + "os registos pedidos"
+                );
+            }
+
+            synchronized (this) {
+                synchronized (ficheiro) {
+                    aplicarRecuperacaoAtomica(
+                            de,
+                            ate,
+                            recuperados
+                    );
+                }
+            }
+
+            registarEvento(
+                    "RECUPERACAO",
+                    "de=" + de
+                            + ";ate=" + ate
+                            + ";term=" + termoLote
+            );
         } catch (IOException e) {
-            System.out.println(
-                    "RECUPERACAO_FALHOU: "
-                            + e.getMessage()
+            registarEvento(
+                    "RECUPERACAO_FALHOU",
+                    e.getMessage()
             );
         } finally {
             synchronized (this) {
                 recuperacaoEmCurso = false;
             }
+        }
+    }
+
+    private void aplicarRecuperacaoAtomica(
+            long de,
+            long ate,
+            List<SensorRecord> recuperados
+    ) throws IOException {
+        List<SensorRecord> atuais = ficheiro.all();
+
+        List<SensorRecord> substitutos =
+                new ArrayList<>();
+
+        for (SensorRecord registo : atuais) {
+            if (registo.getSeq() < de) {
+                substitutos.add(registo);
+            }
+        }
+
+        substitutos.addAll(recuperados);
+
+        ficheiro.replaceAtomically(substitutos);
+
+        retidos.subMap(
+                de,
+                true,
+                ate,
+                true
+        ).clear();
+
+        recarregarEstadoDoFicheiro();
+        aplicarRetidos();
+
+        for (SensorRecord registo : recuperados) {
+            registarEvento(
+                    "RECUPERACAO_REGISTO",
+                    "seq=" + registo.getSeq()
+            );
         }
     }
 
@@ -586,7 +835,8 @@ public final class PartitionNode {
                     long lastTerm;
 
                     synchronized (ficheiro) {
-                        SensorRecord ultimo = ficheiro.last();
+                        SensorRecord ultimo =
+                                ultimoRegisto();
 
                         lastSeq = ultimo == null
                                 ? 0
@@ -613,7 +863,8 @@ public final class PartitionNode {
             }
         }
 
-        if (pedido == null || Wire.isolated(k, i)) {
+        if (pedido == null
+                || Wire.isolated(k, i)) {
             return;
         }
 
@@ -651,10 +902,9 @@ public final class PartitionNode {
                         VoteReply.decode(mensagem)
                 );
             }
-
         } catch (IllegalArgumentException e) {
             System.out.println(
-                    "Mensagem de eleição inválida: "
+                    "Mensagem de eleicao invalida: "
                             + e.getMessage()
             );
         }
@@ -681,7 +931,8 @@ public final class PartitionNode {
                 long lastTerm;
 
                 synchronized (ficheiro) {
-                    SensorRecord ultimo = ficheiro.last();
+                    SensorRecord ultimo =
+                            ultimoRegisto();
 
                     lastSeq = ultimo == null
                             ? 0
@@ -730,7 +981,9 @@ public final class PartitionNode {
         }
     }
 
-    private void processarVoto(VoteReply resposta) {
+    private void processarVoto(
+            VoteReply resposta
+    ) {
         if (Wire.isolated(k, i)
                 || resposta.getVoter() == i) {
             return;
@@ -759,8 +1012,9 @@ public final class PartitionNode {
     }
 
     private void atualizarEnvioLotes() {
-        boolean lider = !Wire.isolated(k, i)
-                && raftState.termoSeLider() >= 0;
+        boolean lider =
+                !Wire.isolated(k, i)
+                        && raftState.termoSeLider() >= 0;
 
         if (lider && tarefaLotes == null) {
             tarefaLotes = agendador.scheduleAtFixedRate(
@@ -769,7 +1023,8 @@ public final class PartitionNode {
                     Wire.PERIODO_HB_MS,
                     TimeUnit.MILLISECONDS
             );
-        } else if (!lider && tarefaLotes != null) {
+        } else if (!lider
+                && tarefaLotes != null) {
             pararEnvioLotes();
         }
     }
@@ -808,7 +1063,8 @@ public final class PartitionNode {
                     lote = new ArrayList<>(pendentes);
                     pendentes.clear();
 
-                    SensorRecord ultimo = ficheiro.last();
+                    SensorRecord ultimo =
+                            ultimoRegisto();
 
                     long lastSeq = ultimo == null
                             ? 0
@@ -847,6 +1103,7 @@ public final class PartitionNode {
             );
         } catch (IOException e) {
             devolverPendentes(lote);
+
             System.out.println(
                     "Erro ao publicar LOTE: "
                             + e.getMessage()
@@ -868,7 +1125,6 @@ public final class PartitionNode {
     private void executarServidorTCP() {
         try (ServerSocket servidor =
                      new ServerSocket(porto)) {
-
             while (true) {
                 try {
                     atenderPedidoTCP(
@@ -881,7 +1137,6 @@ public final class PartitionNode {
                     );
                 }
             }
-
         } catch (IOException e) {
             System.out.println(
                     "Erro ao iniciar servidor TCP: "
@@ -890,7 +1145,9 @@ public final class PartitionNode {
         }
     }
 
-    private void atenderPedidoTCP(Socket socket) {
+    private void atenderPedidoTCP(
+            Socket socket
+    ) {
         try (
                 Socket cliente = socket;
                 BufferedReader entrada =
@@ -912,7 +1169,7 @@ public final class PartitionNode {
             cliente.setSoTimeout(Wire.T_TCP_MS);
 
             if (Wire.isolated(k, i)) {
-                saida.println("ERRO Nó isolado");
+                saida.println("ERRO No isolado");
                 return;
             }
 
@@ -923,11 +1180,14 @@ public final class PartitionNode {
                 return;
             }
 
-            String[] campos = pedido.trim().split("\\s+");
+            String[] campos =
+                    pedido.trim().split("\\s+");
 
             if (campos.length != 3
                     || !"PEDIDO".equals(campos[0])) {
-                saida.println("ERRO Pedido mal formado");
+                saida.println(
+                        "ERRO Pedido mal formado"
+                );
                 return;
             }
 
@@ -938,12 +1198,16 @@ public final class PartitionNode {
                 de = Long.parseLong(campos[1]);
                 ate = Long.parseLong(campos[2]);
             } catch (NumberFormatException e) {
-                saida.println("ERRO Intervalo inválido");
+                saida.println(
+                        "ERRO Intervalo invalido"
+                );
                 return;
             }
 
             if (de > ate) {
-                saida.println("ERRO Intervalo inválido");
+                saida.println(
+                        "ERRO Intervalo invalido"
+                );
                 return;
             }
 
@@ -955,15 +1219,32 @@ public final class PartitionNode {
                 }
             }
 
+            if (registos.size() != ate - de + 1) {
+                saida.println(
+                        "ERRO Registos indisponiveis"
+                                + " no intervalo"
+                );
+                return;
+            }
+
+            long esperado = de;
+
             for (SensorRecord registo : registos) {
+                if (registo.getSeq() != esperado) {
+                    saida.println(
+                            "ERRO Intervalo local incompleto"
+                    );
+                    return;
+                }
+
                 saida.println(registo.toLine());
+                esperado++;
             }
 
             saida.println("FIM");
-
         } catch (IOException e) {
             System.out.println(
-                    "Recuperação TCP interrompida: "
+                    "Recuperacao TCP interrompida: "
                             + e.getMessage()
             );
         }

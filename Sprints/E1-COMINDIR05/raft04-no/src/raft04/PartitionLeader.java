@@ -140,11 +140,13 @@ public class PartitionLeader {
 
             // Construir o lote fora da secção crítica
             Batch batch = new Batch(
+                    0,
+                    1,
                     endereco,
                     porto,
-                    incarnacao,
                     heartbeat,
                     ultimoSeq,
+                    0,
                     lote
             );
 

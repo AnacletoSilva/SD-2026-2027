@@ -58,7 +58,9 @@ public class SensorRecord {
                 seq,
                 sensorId,
                 temperature,
-                LocalDateTime.now().withNano(0).toString()
+                LocalDateTime.now()
+                        .withNano(0)
+                        .toString()
         );
     }
 
@@ -73,7 +75,9 @@ public class SensorRecord {
                 seq,
                 sensorId,
                 temperature,
-                LocalDateTime.now().withNano(0).toString(),
+                LocalDateTime.now()
+                        .withNano(0)
+                        .toString(),
                 lamport,
                 vector.copy()
         );
@@ -91,7 +95,9 @@ public class SensorRecord {
                 seq,
                 sensorId,
                 temperature,
-                LocalDateTime.now().withNano(0).toString(),
+                LocalDateTime.now()
+                        .withNano(0)
+                        .toString(),
                 lamport,
                 vector.copy(),
                 term
@@ -100,41 +106,65 @@ public class SensorRecord {
 
     public String toLine() {
         return seq
+                + ";" + term
                 + ";" + sensorId
                 + ";" + temperature
                 + ";" + timestamp
                 + ";" + lamport
-                + ";" + (vector == null ? "" : vector)
-                + ";" + term;
+                + ";" + (vector == null ? "" : vector);
     }
 
     public static SensorRecord fromLine(String line) {
         String[] campos = line.trim().split(";", -1);
 
-        if (campos.length != 6 && campos.length != 7) {
+        if (campos.length != 6
+                && campos.length != 7) {
             throw new IllegalArgumentException(
                     "Registo mal formado: " + line
             );
         }
 
         long seq = Long.parseLong(campos[0]);
-        String sensor = campos[1];
-        double temperatura = Double.parseDouble(campos[2]);
-        String timestamp = campos[3];
-        long lamport = Long.parseLong(campos[4]);
+        long term = 0;
+        String sensor;
+        double temperatura;
+        String timestamp;
+        long lamport;
+        String vectorText;
+
+        if (campos.length == 7) {
+            try {
+                term = Long.parseLong(campos[1]);
+                sensor = campos[2];
+                temperatura = Double.parseDouble(campos[3]);
+                timestamp = campos[4];
+                lamport = Long.parseLong(campos[5]);
+                vectorText = campos[6];
+            } catch (NumberFormatException e) {
+                sensor = campos[1];
+                temperatura = Double.parseDouble(campos[2]);
+                timestamp = campos[3];
+                lamport = Long.parseLong(campos[4]);
+                vectorText = campos[5];
+                term = Long.parseLong(campos[6]);
+            }
+        } else {
+            sensor = campos[1];
+            temperatura = Double.parseDouble(campos[2]);
+            timestamp = campos[3];
+            lamport = Long.parseLong(campos[4]);
+            vectorText = campos[5];
+        }
 
         VectorClock vector = null;
-        if (!campos[5].isEmpty()) {
-            String[] componentes = campos[5].split(",");
+
+        if (!vectorText.isEmpty()) {
+            String[] componentes = vectorText.split(",");
             vector = VectorClock.parse(
-                    campos[5],
+                    vectorText,
                     componentes.length
             );
         }
-
-        long term = campos.length == 7
-                ? Long.parseLong(campos[6])
-                : 0;
 
         return new SensorRecord(
                 seq,

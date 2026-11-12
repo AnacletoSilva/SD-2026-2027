@@ -69,7 +69,7 @@ public final class Wire {
     }
 
     public static int nodePort(int k, int i) {
-        return PORTO_BASE + (k * GRUPO) + i;
+        return PORTO_BASE + (k * GRUPO) + (i - 1);
     }
 
     public static boolean isolated(int k, int i) {
