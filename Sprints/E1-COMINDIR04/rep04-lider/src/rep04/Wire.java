@@ -1,48 +1,113 @@
-package rep04;
+package raft04;
 
-public final class Wire {
-    public static final int LIMITE_RETIDOS = 10;
-    public static final int T_TCP_MS = 5000;
-    public static final int PORTO_BASE = 7000;
-    public static final double LIMIAR_ALARME = 28.0;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
-    private Wire() { }
+public final class PartitionNode {
+    private final int k;
+    private final int i;
+    private final int n;
 
-    public static String topicIn(int k) { return "rep04-in-p" + k; }
-    public static String topicData(int k) { return "rep04-p" + k; }
+    private final String endereco;
+    private final String api;
+    private final int porto;
 
-    public static String in(String sensor, double temp) {
-        return in(sensor, temp, 0, new VectorClock(1));
-    }
+    private final IpfsPubSub pubSub;
+    private final RecordFile ficheiro;
+    private final RaftState raftState;
+    private final ScheduledExecutorService agendador;
 
-    public static String in(String sensor, double temp, long lamport, VectorClock vector) {
-        return "IN;" + sensor + ";" + temp + ";" + lamport + ";" + vector;
-    }
-
-    public static String reg(String host, int port, SensorRecord r) {
-        return "REG;" + host + ";" + port + ";" + r.toLine();
-    }
-
-    public static String type(String msg) {
-        String m = msg.trim();
-        int i = m.indexOf(';');
-        if (i <= 0) {
-            throw new IllegalArgumentException("Mensagem sem tipo: " + msg);
+    private PartitionNode(
+            int k,
+            int i,
+            int n,
+            String endereco,
+            String api
+    ) throws IOException {
+        if (n < 1 || k < 0 || k >= n) {
+            throw new IllegalArgumentException(
+                    "Partição inválida: k=" + k + ", N=" + n
+            );
         }
-        return m.substring(0, i);
-    }
 
-    public static String body(String msg) {
-        String m = msg.trim();
-        return m.substring(m.indexOf(';') + 1);
-    }
-
-    public static String[] regParts(String msg) {
-        String[] f = msg.trim().split(";", 4);
-        if (f.length != 4 || !f[0].equals("REG")) {
-            throw new IllegalArgumentException("REG mal formado: " + msg);
+        if (i < 1 || i > Wire.GRUPO) {
+            throw new IllegalArgumentException(
+                    "Nó inválido: i=" + i
+                            + ". O identificador deve estar entre 1 e "
+                            + Wire.GRUPO
+            );
         }
-        return new String[] { f[1], f[2], f[3] };
+
+        this.k = k;
+        this.i = i;
+        this.n = n;
+        this.endereco = endereco;
+        this.api = api;
+        this.porto = Wire.PORTO_BASE + k;
+
+        this.pubSub = new IpfsPubSub(api);
+
+        this.ficheiro = new RecordFile(
+                "no-p" + k + "-n" + i + ".txt"
+        );
+
+        Path ficheiroEstado = Path.of(
+                "estado-p" + k + "-n" + i + ".txt"
+        );
+
+        this.raftState = new RaftState(
+                k,
+                i,
+                Wire.GRUPO,
+                Wire.ELEICAO_MIN_MS,
+                Wire.ELEICAO_MAX_MS,
+                ficheiroEstado,
+                System.out::println
+        );
+
+        this.agendador = new ScheduledThreadPoolExecutor(1);
+
+        this.agendador.scheduleAtFixedRate(
+                this::pulsar,
+                Wire.VERIFICACAO_MS,
+                Wire.VERIFICACAO_MS,
+                TimeUnit.MILLISECONDS
+        );
+    }
+
+    private void pulsar() {
+        long termo = raftState.pulsar();
+
+        if (termo >= 0) {
+            System.out.println(
+                    "PEDIDO_VOTO;p" + k
+                            + ";n" + i
+                            + ";termo=" + termo
+            );
+        }
+    }
+
+    public static void main(String[] args) throws IOException {
+        if (args.length < 2 || args.length > 3) {
+            System.out.println(
+                    "Uso: java raft04.PartitionNode "
+                            + "<k> <i> [N]"
+            );
+            return;
+        }
+
+        int k = Integer.parseInt(args[0]);
+        int i = Integer.parseInt(args[1]);
+        int n = args.length == 3
+                ? Integer.parseInt(args[2])
+                : 3;
+
+        String endereco = "127.0.0.1";
+        String api = "http://127.0.0.1:5001/api/v0";
+
+        new PartitionNode(k, i, n, endereco, api);
     }
 }
-
