@@ -1,2 +1,11 @@
 .clawdea/REPO_STATE.md
 .idea/
+target/
+*.iml
+.env
+.env.*
+!.env.example
+token.txt
+*.token
+master.key
+**/master.key
