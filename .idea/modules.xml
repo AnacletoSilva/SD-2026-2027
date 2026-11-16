@@ -3,6 +3,9 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/.idea/Repository.iml" filepath="$PROJECT_DIR$/.idea/Repository.iml" />
+      <module fileurl="file://$PROJECT_DIR$/Sprints/E1-COMINDIR05/raft04-no/raft04-no.iml" filepath="$PROJECT_DIR$/Sprints/E1-COMINDIR05/raft04-no/raft04-no.iml" />
+      <module fileurl="file://$PROJECT_DIR$/Sprints/E1-COMINDIR05/raft04-processador/raft04-processador.iml" filepath="$PROJECT_DIR$/Sprints/E1-COMINDIR05/raft04-processador/raft04-processador.iml" />
+      <module fileurl="file://$PROJECT_DIR$/Sprints/E1-COMINDIR05/raft04-produtor/raft04-produtor.iml" filepath="$PROJECT_DIR$/Sprints/E1-COMINDIR05/raft04-produtor/raft04-produtor.iml" />
     </modules>
   </component>
 </project>

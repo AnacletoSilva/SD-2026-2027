@@ -128,7 +128,7 @@ git push origin tarefa-1
 **Boas práticas de *commit*:**
 
 - Escreve mensagens no commit que descrevam **o que** foi feito: `"Implementação da Tarefa UDP001"` em vez de `"update"` ou `"cenas"`.
-- Não envies ficheiros gerados pela compilação nem pastas do IDE (`bin/`, `target/`, `.idea/`, `node_modules/`) — usa um ficheiro `.gitignore`.
+- Não envies ficheiros gerados pela compilação nem pastas do IDE (`bin/`, `target/`, `.idea/`, `node_modules/`) — usa um ficheiro `Sprints/E1-COMINDIR05/raft04-processador/.gitignore`.
 
 ### Passo D — Criar o *Pull Request* (PR) para avaliação
 
