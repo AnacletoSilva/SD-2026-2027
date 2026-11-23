@@ -9,3 +9,4 @@ token.txt
 *.token
 master.key
 **/master.key
+out/
